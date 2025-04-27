@@ -25,27 +25,24 @@ const fastify = Fastify({
   logger: true,
 })
 
-// Register CORS plugin with specific configuration for development
+// Register CORS plugin with specific configuration for production
 await fastify.register(fastifyCors, {
   origin: (origin, cb) => {
-    // Allow requests with no origin (like mobile apps, curl, etc)
-    if (!origin) {
-      cb(null, true)
-      return
-    }
+    const allowedOrigins = [
+      "https://spotix-orcin.vercel.app",
+      "https://spotix.com.ng"
+    ]
 
-    // Allow requests from localhost on any port
-    if (/^https?:\/\/localhost(:\d+)?$/.test(origin) || /^https?:\/\/127\.0\.0\.1(:\d+)?$/.test(origin)) {
+    if (!origin || allowedOrigins.includes(origin)) {
       cb(null, true)
-      return
+    } else {
+      cb(new Error("Not allowed by CORS"), false)
     }
-
-    // Default deny
-    cb(new Error("Not allowed"), false)
   },
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
   credentials: true,
 })
+
 
 // Basic route to test server
 fastify.get("/api/test", async (request, reply) => {
