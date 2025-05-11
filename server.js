@@ -12,6 +12,8 @@ import enhanceRoute from "./api/gemini/enhance.js"
 import paymentRoute from "./api/payment.js"
 import webhookRoute from "./api/webhook.js"
 import verifyRoute from "./api/verify.js"
+import sendMailRoutes from "./api/send-mail.js"
+
 
 // Configure dotenv
 dotenv.config()
@@ -30,7 +32,8 @@ await fastify.register(fastifyCors, {
   origin: (origin, cb) => {
     const allowedOrigins = [
       "https://spotix-orcin.vercel.app",
-      "https://spotix.com.ng"
+      "https://spotix.com.ng",
+	  "https://www.spotix.com.ng"
     ]
 
     if (!origin || allowedOrigins.includes(origin)) {
@@ -54,6 +57,7 @@ fastify.register(enhanceRoute, { prefix: "/api/gemini" })
 fastify.register(paymentRoute, { prefix: "/api" })
 fastify.register(webhookRoute, { prefix: "/api/payment" }) 
 fastify.register(verifyRoute, { prefix: "/api" })
+fastify.register(sendMailRoutes, { prefix: "/api/mail" })
 
 // Check if dist directory exists before registering static plugin
 const distPath = path.join(__dirname, "dist")
