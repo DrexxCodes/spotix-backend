@@ -13,6 +13,7 @@ import paymentRoute from "./api/payment.js"
 import webhookRoute from "./api/webhook.js"
 import verifyRoute from "./api/verify.js"
 import sendMailRoutes from "./api/mail.js"
+import notifyRoutes from "./api/notify.js" 
 
 
 // Configure dotenv
@@ -58,6 +59,7 @@ fastify.register(paymentRoute, { prefix: "/api" })
 fastify.register(webhookRoute, { prefix: "/api/payment" }) 
 fastify.register(verifyRoute, { prefix: "/api" })
 fastify.register(sendMailRoutes, { prefix: "/api/mail" })
+fastify.register(notifyRoutes, { prefix: "/api/notify" }) 
 
 // Check if dist directory exists before registering static plugin
 const distPath = path.join(__dirname, "dist")
