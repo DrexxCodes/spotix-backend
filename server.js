@@ -18,7 +18,6 @@ import notifyRoutes from "./api/notify.js";
 import webhookRoute from "./api/webhook.js";
 import verifyPaymentRoute from "./api/verify-payment.js";
 import ticketRoute from "./api/ticket.js";
-import IWSSRoute from "./api/IWSS.js";
 
 // Configure dotenv
 dotenv.config()
@@ -62,7 +61,6 @@ fastify.register(sendMailRoutes, { prefix: "/api/mail" });
 fastify.register(notifyRoutes, { prefix: "/api/notify" });
 fastify.register(webhookRoute, { prefix: "/api" });
 fastify.register(ticketRoute, { prefix: "/api" });
-fastify.register(IWSSRoute, { prefix: "/api" });
 fastify.register(verifyPaymentRoute, { prefix: "/api" });
 // Serve frontend (if dist exists)
 const distPath = path.join(__dirname, "dist");
