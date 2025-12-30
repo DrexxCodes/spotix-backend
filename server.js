@@ -1,97 +1,93 @@
-import Fastify from "fastify"
-import fastifyCors from "@fastify/cors"
-import fastifyStatic from "@fastify/static"
-import { fileURLToPath } from "url"
-import path from "path"
-import { dirname } from "path"
-import fs from "fs"
-import dotenv from "dotenv"
-
+/* 
+This server isn't deployed from this frontend. The backend is developed and maintained by Drexx Codes and the Spotix Team 
+2025 - till date
+*/
+import Fastify from "fastify";
+import fastifyCors from "@fastify/cors";
+import fastifyStatic from "@fastify/static";
+import { fileURLToPath } from "url";
+import path, { dirname } from "path";
+import fs from "fs";
+import dotenv from "dotenv";
 // Import route handlers
-import enhanceRoute from "./api/gemini/enhance.js"
-import paymentRoute from "./api/payment.js"
-// import webhookRoute from "./api/webhook.js"
-import verifyRoute from "./api/verify.js"
-import sendMailRoutes from "./api/mail.js"
-import notifyRoutes from "./api/notify.js" 
-
+import enhanceRoute from "./api/gemini/enhance.js";
+import paymentRoute from "./api/payment.js";
+import verifyRoute from "./api/verify.js";
+import sendMailRoutes from "./api/mail.js";
+import notifyRoutes from "./api/notify.js";
+import webhookRoute from "./api/webhook.js";
+import verifyPaymentRoute from "./api/verify-payment.js";
+import ticketRoute from "./api/ticket.js";
+import IWSSRoute from "./api/IWSS.js";
 
 // Configure dotenv
 dotenv.config()
-
-// Get __dirname equivalent in ESM
-const __filename = fileURLToPath(import.meta.url)
-const __dirname = dirname(__filename)
-
-// Initialize Fastify app
-const fastify = Fastify({
-  logger: true,
-})
-
-// Register CORS plugin with specific configuration for production
+// Debug: Check if env vars are loaded
+console.log("🔍 Environment Variables Check:")
+console.log("FIREBASE_PROJECT_ID:", process.env.FIREBASE_PROJECT_ID ? "✅ Set" : "❌ Missing")
+console.log("FIREBASE_CLIENT_EMAIL:", process.env.FIREBASE_CLIENT_EMAIL ? "✅ Set" : "❌ Missing")
+console.log("FIREBASE_PRIVATE_KEY:", process.env.FIREBASE_PRIVATE_KEY ? "✅ Set" : "❌ Missing")
+// __dirname equivalent in ESM
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+// Initialize Fastify
+const fastify = Fastify({ logger: true });
+// Register CORS
 await fastify.register(fastifyCors, {
   origin: (origin, cb) => {
-    const allowedOrigins = [
-      "https://spotix-orcin.vercel.app",
-      "https://spotix.com.ng",
-	  "https://www.spotix.com.ng"
-    ]
-
-    if (!origin || allowedOrigins.includes(origin)) {
-      cb(null, true)
+    if (!origin || /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
+      cb(null, true);
     } else {
-      cb(new Error("Not allowed by CORS"), false)
+      cb(new Error("Not allowed"), false);
     }
   },
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
   credentials: true,
-})
+});
 
+// Handle favicon requests (prevents 404 errors)
+fastify.get("/favicon.ico", (request, reply) => {
+  reply.code(204).send(); // 204 = No Content
+});
 
-// Basic route to test server
+// Test route
 fastify.get("/api/test", async (request, reply) => {
-  return { message: "Server is working!" }
-})
-
-// Register API routes before static file handling
-fastify.register(enhanceRoute, { prefix: "/api/gemini" })
-fastify.register(paymentRoute, { prefix: "/api" })
-// fastify.register(webhookRoute, { prefix: "/api/payment" }) 
-fastify.register(verifyRoute, { prefix: "/api" })
-fastify.register(sendMailRoutes, { prefix: "/api/mail" })
-fastify.register(notifyRoutes, { prefix: "/api/notify" }) 
-
-// Check if dist directory exists before registering static plugin
-const distPath = path.join(__dirname, "dist")
+  return { message: "Server is working!" };
+});
+// Register API routes
+fastify.register(enhanceRoute, { prefix: "/api/gemini" });
+fastify.register(paymentRoute, { prefix: "/api" });
+fastify.register(verifyRoute, { prefix: "/api" });
+fastify.register(sendMailRoutes, { prefix: "/api/mail" });
+fastify.register(notifyRoutes, { prefix: "/api/notify" });
+fastify.register(webhookRoute, { prefix: "/api" });
+fastify.register(ticketRoute, { prefix: "/api" });
+fastify.register(IWSSRoute, { prefix: "/api" });
+fastify.register(verifyPaymentRoute, { prefix: "/api" });
+// Serve frontend (if dist exists)
+const distPath = path.join(__dirname, "dist");
 if (fs.existsSync(distPath)) {
-  // Register static file handler with options to avoid conflicts
   await fastify.register(fastifyStatic, {
     root: distPath,
     prefix: "/",
-    decorateReply: false
-  })
-
-  // Use a preHandler hook instead of a catch-all route
+    decorateReply: false,
+  });
   fastify.setNotFoundHandler((request, reply) => {
-    // Don't handle API routes with this handler
     if (request.url.startsWith("/api/")) {
-      return reply.code(404).send({ error: "API route not found" })
+      return reply.code(404).send({ error: "API route not found" });
     }
-    // For non-API routes, serve the index.html
-    return reply.sendFile("index.html")
-  })
+    return reply.sendFile("index.html");
+  });
 }
-
-// Start the server the fastify way not with that rubbish express
+// Start the server
 const start = async () => {
   try {
-    const PORT = process.env.PORT || 5000
-    await fastify.listen({ port: PORT, host: "0.0.0.0" })
-    console.log(`Server running on port ${PORT}`)
+    const PORT = process.env.PORT || 5000;
+    await fastify.listen({ port: PORT, host: "0.0.0.0" });
+    console.log(`🚀 Server running on port ${PORT}`);
   } catch (err) {
-    fastify.log.error(err)
-    process.exit(1)
+    fastify.log.error(err);
+    process.exit(1);
   }
-}
-
-start()
+};
+start();
