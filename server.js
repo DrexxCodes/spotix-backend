@@ -23,7 +23,7 @@ const fastify = Fastify({ logger: true })
 
 // Register CORS (allowing your Vercel frontend)
 await fastify.register(fastifyCors, {
-  origin: ["https://spotix-orcin.vercel.app", /^https?:\/\/localhost(:\d+)?$/],
+  origin: ["https://spotix-orcin.vercel.app", "https://spotix.com.ng", "https://www.spotix.com.ng", "https://spotix-backend.onrender.com", "https://api.spotix.com.ng", /^https?:\/\/localhost(:\d+)?$/],
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
   credentials: true,
 })
@@ -69,3 +69,4 @@ const start = async () => {
 }
 
 start()
+
