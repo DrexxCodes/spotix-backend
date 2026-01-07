@@ -8,11 +8,11 @@ import { FieldValue } from "firebase-admin/firestore";
  */
 export default async function IWSSRoute(fastify, options) {
   /**
-   * POST /ticket
+   * POST /ticket/iwss
    * Body: { reference: string }
-   * Creates ticket after verifying payment
+   * Creates ticket after verifying IWSS payment
    */
-  fastify.post("/ticket", async (request, reply) => {
+  fastify.post("/ticket/iwss", async (request, reply) => {
     try {
       const { reference } = request.body;
 
@@ -33,7 +33,7 @@ export default async function IWSSRoute(fastify, options) {
         });
       }
 
-      fastify.log.info(`Processing ticket generation for reference: ${reference}`);
+      fastify.log.info(`Processing IWSS ticket generation for reference: ${reference}`);
 
       // Step 1: Verify payment status with retry logic
       let paymentData = null;
@@ -210,44 +210,35 @@ export default async function IWSSRoute(fastify, options) {
 
       // Step 7: Call atomic operations API (ALWAYS - it handles idempotency internally)
       try {
-        const ATOMIC_OPS_URL = process.env.ATOMIC_OPS_URL || "http://localhost:3000/api/atomic-operations";
+        const ATOMIC_FUNCTION_URL = process.env.ATOMIC_FUNCTION_URL;
         
-        fastify.log.info("Calling atomic operations API");
-        
-        const atomicResponse = await fetch(ATOMIC_OPS_URL, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            creatorId: paymentData.eventCreatorId,
-            eventId: paymentData.eventId,
-            ticketType: paymentData.ticketType,
-            ticketPrice: paymentData.ticketPrice,
-            discountCode: paymentData.discountCode || null,
-            ticketId: ticketId,
-          }),
-        });
+        if (ATOMIC_FUNCTION_URL) {
+          const atomicResponse = await fetch(ATOMIC_FUNCTION_URL, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              ticketId,
+              eventCreatorId: paymentData.eventCreatorId,
+              eventId: paymentData.eventId,
+              ticketType: paymentData.ticketType,
+              ticketPrice: paymentData.ticketPrice,
+              discountCode: paymentData.discountCode,
+            }),
+          });
 
-        const atomicResult = await atomicResponse.json();
-        
-        if (atomicResponse.ok) {
-          if (atomicResult.alreadyProcessed) {
-            fastify.log.info(`Atomic operations already processed for ticket ${ticketId}`);
-          } else {
+          if (atomicResponse.ok) {
             fastify.log.info("Atomic operations completed successfully");
-            fastify.log.info(`Operations performed:`, atomicResult.operationsPerformed);
+          } else {
+            fastify.log.warn("Atomic operations failed - continuing with ticket generation");
           }
-        } else {
-          fastify.log.error("Atomic operations failed:", atomicResult);
-          // Don't fail ticket generation, but log the error
         }
-      } catch (atomicError) {
-        fastify.log.error("Error calling atomic operations API:", atomicError);
-        // Don't fail ticket generation
+      } catch (error) {
+        fastify.log.error("Error calling atomic operations (non-blocking):", error);
       }
 
-      // Step 8: Handle referral tracking (separate from atomic ops)
+      // Step 8: Update referral if applicable
       if (paymentData.referralCode || paymentData.referralName) {
         try {
           const referralCode = paymentData.referralCode || paymentData.referralName;
@@ -371,7 +362,7 @@ try {
             ticket_type: paymentData.ticketType,
             booker_email: paymentData.bookerEmail || "support@spotix.com.ng",
             ticket_price: paymentData.ticketPrice.toFixed(2),
-            payment_method: "Paystack",
+            payment_method: "IWSS",
           }),
         });
 
@@ -388,7 +379,7 @@ try {
       // Step 13: Return success response (same response regardless of new or recovered)
       return reply.code(200).send({
         success: true,
-        message: "Ticket generated successfully",
+        message: "Ticket generated successfully via IWSS",
         ticketId,
         ticketReference: reference,
         eventId: paymentData.eventId,
@@ -396,6 +387,7 @@ try {
         ticketType: paymentData.ticketType,
         ticketPrice: paymentData.ticketPrice,
         totalAmount: paymentData.totalAmount,
+        paymentMethod: "IWSS",
         userData: {
           fullName: userData.fullName || userData.username || "",
           email: userData.email || "",
@@ -415,7 +407,7 @@ try {
         developer: "API developed and maintained by Spotix Technologies",
       });
     } catch (error) {
-      fastify.log.error("Ticket generation error - FULL ERROR:", JSON.stringify(error, Object.getOwnPropertyNames(error)));
+      fastify.log.error("IWSS Ticket generation error - FULL ERROR:", JSON.stringify(error, Object.getOwnPropertyNames(error)));
       fastify.log.error("Error message:", error?.message);
       fastify.log.error("Error stack:", error?.stack);
       fastify.log.error("Error name:", error?.name);
@@ -423,7 +415,7 @@ try {
       
       return reply.code(500).send({
         error: "Internal Server Error",
-        message: "Failed to generate ticket",
+        message: "Failed to generate ticket via IWSS",
         details: error?.message || String(error),
         developer: "API developed and maintained by Spotix Technologies",
       });
@@ -431,12 +423,12 @@ try {
   });
 
   /**
-   * Health check for ticket endpoint
+   * Health check for IWSS ticket endpoint
    */
-  fastify.get("/ticket/health", async (request, reply) => {
+  fastify.get("/ticket/iwss/health", async (request, reply) => {
     return reply.code(200).send({
       status: "healthy",
-      service: "Ticket Generation API",
+      service: "IWSS Ticket Generation API",
       timestamp: new Date().toISOString(),
       developer: "API developed and maintained by Spotix Technologies",
     });
