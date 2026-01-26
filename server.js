@@ -20,6 +20,7 @@ import notifyRoutes from "./v1/notify.js";
 import webhookRoute from "./v1/webhook.js";
 import verifyPaymentRoute from "./v1/verify-payment.js";
 import ticketRoute from "./v1/ticket.js";
+import freeTicketRoute from "./v1/ticket2.js";
 
 // Load env
 dotenv.config();
@@ -81,6 +82,7 @@ fastify.register(notifyRoutes, { prefix: "/v1/notify" });
 fastify.register(webhookRoute, { prefix: "/v1" });
 fastify.register(ticketRoute, { prefix: "/v1" });
 fastify.register(verifyPaymentRoute, { prefix: "/v1" });
+fastify.register(freeTicketRoute, { prefix: "/v1" });
 
 // Serve frontend if dist exists
 const distPath = path.join(__dirname, "dist");

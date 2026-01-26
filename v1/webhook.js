@@ -6,10 +6,7 @@ import { adminDb } from "./firebase-admin.js";
  * Verifies Paystack signature and updates payment status in Firestore
  */
 export default async function webhookRoute(fastify, options) {
-  /**
-   * POST /webhook
-   * Receives payment notifications from Paystack
-   */
+
   fastify.post("/webhook", async (request, reply) => {
     try {
       // Get Paystack secret key from environment
@@ -47,10 +44,28 @@ export default async function webhookRoute(fastify, options) {
           return reply.code(400).send({ error: "Missing reference" });
         }
 
+        // Check transaction type from metadata
+        const transactionType = data?.metadata?.custom_fields?.find(
+          field => field.variable_name === "type"
+        )?.value;
+
+        fastify.log.info(`Transaction type: ${transactionType || "not specified"}`);
+
+        // Only process if transaction type is ticket_purchase
+        if (transactionType !== "ticket_purchase") {
+          fastify.log.info(`Skipping non-ticket transaction: ${transactionType}`);
+          return reply.code(200).send({
+            success: true,
+            message: "Transaction received but not a ticket purchase",
+            transactionType,
+            reference,
+          });
+        }
+
         // Determine payment status
         const paymentStatus = event === "charge.success" ? "successful" : "failed";
 
-        fastify.log.info(`Processing payment ${reference} with status: ${paymentStatus}`);
+        fastify.log.info(`Processing ticket purchase ${reference} with status: ${paymentStatus}`);
 
         try {
           // Access Firestore Reference collection
@@ -70,6 +85,7 @@ export default async function webhookRoute(fastify, options) {
             status: paymentStatus,
             updatedAt: new Date().toISOString(),
             paystackEvent: event,
+            transactionType: "ticket_purchase",
             amount: data?.amount || null,
             currency: data?.currency || null,
             customer: {
@@ -78,13 +94,14 @@ export default async function webhookRoute(fastify, options) {
             },
           });
 
-          fastify.log.info(`Successfully updated reference ${reference} to ${paymentStatus}`);
+          fastify.log.info(`Successfully updated ticket purchase reference ${reference} to ${paymentStatus}`);
 
           return reply.code(200).send({
             success: true,
-            message: "Payment status updated",
+            message: "Ticket purchase payment status updated",
             reference,
             status: paymentStatus,
+            transactionType: "ticket_purchase",
           });
         } catch (firestoreError) {
           fastify.log.error("Firestore error:", firestoreError);
@@ -118,8 +135,9 @@ export default async function webhookRoute(fastify, options) {
    */
   fastify.get("/webhook/health", async (request, reply) => {
     return reply.code(200).send({ 
-      status: "healthy",
+      status: "active",
       service: "Paystack Webhook Handler",
+      developer: "Developed by Spotix Technologies",
       timestamp: new Date().toISOString()
     });
   });

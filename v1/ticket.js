@@ -356,7 +356,7 @@ try {
       try {
         const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:5000";
         
-        const emailResponse = await fetch(`${BACKEND_URL}/api/mail/payment-confirmation`, {
+        const emailResponse = await fetch(`${BACKEND_URL}/v1/mail/payment-confirmation`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",

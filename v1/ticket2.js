@@ -2,17 +2,17 @@ import { adminDb } from "./firebase-admin.js";
 import { FieldValue } from "firebase-admin/firestore";
 
 /**
- * Ticket Generation Route (IWSS)
- * Handles ticket creation after payment verification
- * Includes atomic operations for stats, discounts, and referrals
+ * Free Ticket Generation Route
+ * Handles free ticket creation without payment verification
+ * Skips steps 7 (atomic operations) and 11 (analytics) from paid tickets
  */
-export default async function IWSSRoute(fastify, options) {
+export default async function freeTicketRoute(fastify, options) {
   /**
-   * POST /ticket
+   * POST /ticket/free
    * Body: { reference: string }
-   * Creates ticket after verifying payment
+   * Creates free ticket without payment verification
    */
-  fastify.post("/ticket", async (request, reply) => {
+  fastify.post("/ticket/free", async (request, reply) => {
     try {
       const { reference } = request.body;
 
@@ -24,66 +24,45 @@ export default async function IWSSRoute(fastify, options) {
         });
       }
 
-      // Verify reference format
-      if (!reference.startsWith("SPTX-REF-")) {
+      // Verify reference format for free tickets
+      if (!reference.startsWith("SPTX-FREE-")) {
         return reply.code(400).send({
           error: "Bad Request",
-          message: "Invalid reference format. Expected format: SPTX-REF-{timestamp}",
+          message: "Invalid reference format. Expected format: SPTX-FREE-{timestamp}",
           developer: "API developed and maintained by Spotix Technologies",
         });
       }
 
-      fastify.log.info(`Processing ticket generation for reference: ${reference}`);
+      fastify.log.info(`Processing free ticket generation for reference: ${reference}`);
 
-      // Step 1: Verify payment status with retry logic
-      let paymentData = null;
-      let attempts = 0;
-      const maxAttempts = 3;
+      // Step 1: Get reference data (should already be "settled")
+      const referenceDocRef = adminDb.collection("Reference").doc(reference);
+      const referenceDoc = await referenceDocRef.get();
 
-      while (attempts < maxAttempts) {
-        const referenceDocRef = adminDb.collection("Reference").doc(reference);
-        const referenceDoc = await referenceDocRef.get();
-
-        if (!referenceDoc.exists) {
-          return reply.code(404).send({
-            error: "Not Found",
-            message: "Payment reference not found",
-            reference,
-            developer: "API developed and maintained by Spotix Technologies",
-          });
-        }
-
-        paymentData = referenceDoc.data();
-
-        if (paymentData.status === "successful") {
-          break; // Payment successful, proceed
-        } else if (paymentData.status === "failed") {
-          return reply.code(400).send({
-            error: "Payment Failed",
-            message: "Payment verification failed. Please try again or contact support.",
-            reference,
-            developer: "API developed and maintained by Spotix Technologies",
-          });
-        } else if (paymentData.status === "pending") {
-          attempts++;
-          if (attempts < maxAttempts) {
-            fastify.log.info(`Payment still pending, retrying... (${attempts}/${maxAttempts})`);
-            await new Promise((resolve) => setTimeout(resolve, 2000)); // Wait 2 seconds
-          } else {
-            return reply.code(400).send({
-              error: "Payment Pending",
-              message: "Payment is still being processed. Please try again in a few moments.",
-              reference,
-              developer: "API developed and maintained by Spotix Technologies",
-            });
-          }
-        }
+      if (!referenceDoc.exists) {
+        return reply.code(404).send({
+          error: "Not Found",
+          message: "Free ticket reference not found",
+          reference,
+          developer: "API developed and maintained by Spotix Technologies",
+        });
       }
 
-      // Step 2: Generate Ticket ID atomically (or retrieve existing one) using transaction
+      const paymentData = referenceDoc.data();
+
+      // Verify it's a free ticket and status is settled
+      if (paymentData.vendor !== "free ticket" || paymentData.status !== "settled") {
+        return reply.code(400).send({
+          error: "Invalid Reference",
+          message: "This reference is not for a free ticket",
+          reference,
+          developer: "API developed and maintained by Spotix Technologies",
+        });
+      }
+
+      // Step 2: Generate Ticket ID atomically using transaction
       let ticketId = null;
       const now = new Date();
-      const referenceDocRef = adminDb.collection("Reference").doc(reference);
 
       try {
         await adminDb.runTransaction(async (transaction) => {
@@ -98,11 +77,11 @@ export default async function IWSSRoute(fastify, options) {
           // Check if ticketId already exists
           if (refData.ticketId) {
             ticketId = refData.ticketId;
-            fastify.log.info(`Existing ticket ID found in transaction: ${ticketId}`);
+            fastify.log.info(`Existing ticket ID found: ${ticketId}`);
           } else {
             // Generate new ticket ID atomically
             ticketId = generateTicketId();
-            fastify.log.info(`Generated new ticket ID in transaction: ${ticketId}`);
+            fastify.log.info(`Generated new ticket ID: ${ticketId}`);
 
             // Atomically update Reference with new ticketId
             transaction.update(referenceDocRef, {
@@ -113,10 +92,10 @@ export default async function IWSSRoute(fastify, options) {
           }
         });
 
-        fastify.log.info(`Transaction completed successfully with ticketId: ${ticketId}`);
+        fastify.log.info(`Transaction completed with ticketId: ${ticketId}`);
       } catch (transactionError) {
         fastify.log.error("Transaction failed:", transactionError);
-        throw new Error(`Failed to generate ticket ID atomically: ${transactionError.message}`);
+        throw new Error(`Failed to generate ticket ID: ${transactionError.message}`);
       }
 
       const purchaseDate = now.toLocaleDateString();
@@ -136,7 +115,7 @@ export default async function IWSSRoute(fastify, options) {
 
       const userData = userDoc.data();
 
-      // Step 4: Prepare ticket data
+      // Step 4: Prepare ticket data for free event
       const ticketData = {
         uid: paymentData.userId,
         fullName: userData.fullName || userData.username || "",
@@ -148,13 +127,13 @@ export default async function IWSSRoute(fastify, options) {
         purchaseDate,
         purchaseTime,
         verified: false,
-        paymentMethod: "IWSS",
-        originalPrice: paymentData.ticketPrice || 0,
-        ticketPrice: paymentData.ticketPrice || 0,
-        transactionFee: paymentData.transactionFee || 0,
-        totalAmount: paymentData.totalAmount || 0,
-        discountApplied: paymentData.discountCode ? true : false,
-        discountCode: paymentData.discountCode || null,
+        paymentMethod: "Free Ticket", // Free Ticket instead of Paystack
+        originalPrice: 0, // Free
+        ticketPrice: 0, // Free
+        transactionFee: 0, // No fee for free events
+        totalAmount: 0, // Free
+        discountApplied: false, // No discounts for free events
+        discountCode: null,
         referralCode: paymentData.referralCode || null,
         referralName: paymentData.referralName || null,
         eventVenue: paymentData.eventVenue || null,
@@ -166,7 +145,7 @@ export default async function IWSSRoute(fastify, options) {
         createdAt: now.toISOString(),
       };
 
-      // Step 5: Check and create ticket in TicketHistory using ticketId as document ID
+      // Step 5: Create ticket in TicketHistory
       const ticketHistoryRef = adminDb
         .collection("TicketHistory")
         .doc(paymentData.userId)
@@ -176,7 +155,6 @@ export default async function IWSSRoute(fastify, options) {
       const ticketHistoryDoc = await ticketHistoryRef.get();
 
       if (!ticketHistoryDoc.exists) {
-        // Add event details to ticket history
         const ticketHistoryData = {
           ...ticketData,
           eventId: paymentData.eventId,
@@ -185,12 +163,12 @@ export default async function IWSSRoute(fastify, options) {
         };
 
         await ticketHistoryRef.set(ticketHistoryData);
-        fastify.log.info(`Ticket created in TicketHistory with ticketId: ${ticketId}`);
+        fastify.log.info(`Free ticket created in TicketHistory: ${ticketId}`);
       } else {
-        fastify.log.info(`Ticket already exists in TicketHistory: ${ticketId}`);
+        fastify.log.info(`Free ticket already exists in TicketHistory: ${ticketId}`);
       }
 
-      // Step 6: Check and create ticket in attendees using ticketId as document ID
+      // Step 6: Create ticket in attendees
       const attendeeDocRef = adminDb
         .collection("events")
         .doc(paymentData.eventCreatorId)
@@ -203,51 +181,15 @@ export default async function IWSSRoute(fastify, options) {
 
       if (!attendeeDoc.exists) {
         await attendeeDocRef.set(ticketData);
-        fastify.log.info(`Ticket created in attendees with ticketId: ${ticketId}`);
+        fastify.log.info(`Free ticket created in attendees: ${ticketId}`);
       } else {
-        fastify.log.info(`Ticket already exists in attendees: ${ticketId}`);
+        fastify.log.info(`Free ticket already exists in attendees: ${ticketId}`);
       }
 
-      // Step 7: Call atomic operations API (ALWAYS - it handles idempotency internally)
-      try {
-        const ATOMIC_OPS_URL = process.env.ATOMIC_OPS_URL || "http://localhost:3000/api/atomic-operations";
-        
-        fastify.log.info("Calling atomic operations API");
-        
-        const atomicResponse = await fetch(ATOMIC_OPS_URL, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            creatorId: paymentData.eventCreatorId,
-            eventId: paymentData.eventId,
-            ticketType: paymentData.ticketType,
-            ticketPrice: paymentData.ticketPrice,
-            discountCode: paymentData.discountCode || null,
-            ticketId: ticketId,
-          }),
-        });
+      // SKIP Step 7: atomic operations (not needed for free events)
+      fastify.log.info("Skipping atomic operations for free event");
 
-        const atomicResult = await atomicResponse.json();
-        
-        if (atomicResponse.ok) {
-          if (atomicResult.alreadyProcessed) {
-            fastify.log.info(`Atomic operations already processed for ticket ${ticketId}`);
-          } else {
-            fastify.log.info("Atomic operations completed successfully");
-            fastify.log.info(`Operations performed:`, atomicResult.operationsPerformed);
-          }
-        } else {
-          fastify.log.error("Atomic operations failed:", atomicResult);
-          // Don't fail ticket generation, but log the error
-        }
-      } catch (atomicError) {
-        fastify.log.error("Error calling atomic operations API:", atomicError);
-        // Don't fail ticket generation
-      }
-
-      // Step 8: Handle referral tracking (separate from atomic ops)
+      // Step 8: Handle referral code if present
       if (paymentData.referralCode || paymentData.referralName) {
         try {
           const referralCode = paymentData.referralCode || paymentData.referralName;
@@ -270,14 +212,14 @@ export default async function IWSSRoute(fastify, options) {
               }),
               totalTickets: FieldValue.increment(1),
             });
-            fastify.log.info(`Referral code ${referralCode} updated`);
+            fastify.log.info(`Referral code ${referralCode} updated for free ticket`);
           }
         } catch (error) {
           fastify.log.error("Error updating referral:", error);
         }
       }
 
-      // Step 9: Check and save to admin collection using ticketId as document ID
+      // Step 9: Save to admin collection
       const adminTicketRef = adminDb
         .collection("admin")
         .doc("events")
@@ -290,7 +232,7 @@ export default async function IWSSRoute(fastify, options) {
         await adminTicketRef.set({
           reference,
           uid: paymentData.userId,
-          ticketPrice: paymentData.ticketPrice,
+          ticketPrice: 0, // Free
           ticketType: paymentData.ticketType,
           date: now.toISOString(),
           purchaseDate,
@@ -299,9 +241,9 @@ export default async function IWSSRoute(fastify, options) {
           eventCreatorId: paymentData.eventCreatorId,
         });
 
-        fastify.log.info(`Ticket saved to admin collection with ticketId: ${ticketId}`);
+        fastify.log.info(`Free ticket saved to admin collection: ${ticketId}`);
       } else {
-        fastify.log.info(`Ticket already exists in admin collection: ${ticketId}`);
+        fastify.log.info(`Free ticket already exists in admin collection: ${ticketId}`);
       }
 
       // Step 10: Mark ticket generation as complete in Reference
@@ -311,48 +253,12 @@ export default async function IWSSRoute(fastify, options) {
         updatedAt: now.toISOString(),
       });
 
-      fastify.log.info("Reference updated - ticket generation complete");
+      fastify.log.info("Reference updated - free ticket generation complete");
 
-// Step 11: Update global analytics (idempotency handled in analytics API)
-try {
-  const ANALYTICS_FUNCTION_URL = process.env.ANALYTICS_FUNCTION_URL;
-  
-  if (ANALYTICS_FUNCTION_URL) {
-    fastify.log.info("Calling analytics function to update global stats");
-    
-    const analyticsResponse = await fetch(ANALYTICS_FUNCTION_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        ticketPrice: paymentData.ticketPrice,
-        ticketId: ticketId,
-        eventId: paymentData.eventId,
-        timestamp: now.toISOString(),
-      }),
-    });
+      // SKIP Step 11: Analytics (not needed for free events)
+      fastify.log.info("Skipping analytics for free event");
 
-    if (analyticsResponse.ok) {
-      const analyticsResult = await analyticsResponse.json();
-      
-      if (analyticsResult.alreadyProcessed) {
-        fastify.log.info(`Analytics already processed for ticket ${ticketId}`);
-      } else {
-        fastify.log.info("Analytics updated successfully");
-      }
-    } else {
-      fastify.log.warn("Failed to update analytics - ticket still created successfully");
-    }
-  } else {
-    fastify.log.warn("ANALYTICS_FUNCTION_URL not configured - skipping analytics update");
-  }
-} catch (analyticsError) {
-  fastify.log.error("Error updating analytics (non-blocking):", analyticsError);
-}
-
-
-      // Step 12: Send confirmation email (non-blocking - don't fail if email fails)
+      // Step 12: Send confirmation email with Free Ticket details
       try {
         const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:5000";
         
@@ -370,32 +276,31 @@ try {
             payment_ref: reference,
             ticket_type: paymentData.ticketType,
             booker_email: paymentData.bookerEmail || "support@spotix.com.ng",
-            ticket_price: paymentData.ticketPrice.toFixed(2),
-            payment_method: "Paystack",
+            ticket_price: "Free", // Show "Free" instead of price
+            payment_method: "Free Ticket", // Show "Free Ticket" instead of Paystack
           }),
         });
 
         if (emailResponse.ok) {
-          fastify.log.info("Confirmation email sent successfully");
+          fastify.log.info("Free ticket confirmation email sent");
         } else {
-          fastify.log.warn("Failed to send confirmation email - ticket still created successfully");
+          fastify.log.warn("Failed to send confirmation email - ticket still created");
         }
       } catch (error) {
         fastify.log.error("Error sending confirmation email (non-blocking):", error);
-        // Don't fail the request - ticket was created successfully
       }
 
-      // Step 13: Return success response (same response regardless of new or recovered)
+      // Step 13: Return success response
       return reply.code(200).send({
         success: true,
-        message: "Ticket generated successfully",
+        message: "Free ticket generated successfully",
         ticketId,
         ticketReference: reference,
         eventId: paymentData.eventId,
         eventName: paymentData.eventName,
         ticketType: paymentData.ticketType,
-        ticketPrice: paymentData.ticketPrice,
-        totalAmount: paymentData.totalAmount,
+        ticketPrice: 0,
+        totalAmount: 0,
         userData: {
           fullName: userData.fullName || userData.username || "",
           email: userData.email || "",
@@ -410,20 +315,15 @@ try {
           bookerName: paymentData.bookerName,
           bookerEmail: paymentData.bookerEmail,
         },
-        discountApplied: paymentData.discountCode ? true : false,
         referralUsed: paymentData.referralCode ? true : false,
         developer: "API developed and maintained by Spotix Technologies",
       });
     } catch (error) {
-      fastify.log.error("Ticket generation error - FULL ERROR:", JSON.stringify(error, Object.getOwnPropertyNames(error)));
-      fastify.log.error("Error message:", error?.message);
-      fastify.log.error("Error stack:", error?.stack);
-      fastify.log.error("Error name:", error?.name);
-      fastify.log.error("Error type:", typeof error);
+      fastify.log.error("Free ticket generation error:", JSON.stringify(error, Object.getOwnPropertyNames(error)));
       
       return reply.code(500).send({
         error: "Internal Server Error",
-        message: "Failed to generate ticket",
+        message: "Failed to generate free ticket",
         details: error?.message || String(error),
         developer: "API developed and maintained by Spotix Technologies",
       });
@@ -431,12 +331,12 @@ try {
   });
 
   /**
-   * Health check for ticket endpoint
+   * Health check for free ticket endpoint
    */
-  fastify.get("/ticket/health", async (request, reply) => {
+  fastify.get("/ticket/free/health", async (request, reply) => {
     return reply.code(200).send({
       status: "healthy",
-      service: "Ticket Generation API",
+      service: "Free Ticket Generation API",
       timestamp: new Date().toISOString(),
       developer: "API developed and maintained by Spotix Technologies",
     });
