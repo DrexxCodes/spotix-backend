@@ -210,44 +210,44 @@ export default async function ticketRoute(fastify, options) {
 
       // Step 7: Call atomic operations API (ALWAYS - it handles idempotency internally)
       try {
-        const ATOMIC_OPS_URL = process.env.ATOMIC_OPS_URL || "http://localhost:3000/api/atomic-operations";
-        
-        fastify.log.info("Calling atomic operations API");
-        
-        const atomicResponse = await fetch(ATOMIC_OPS_URL, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            creatorId: paymentData.eventCreatorId,
-            eventId: paymentData.eventId,
-            ticketType: paymentData.ticketType,
-            ticketPrice: paymentData.ticketPrice,
-            discountCode: paymentData.discountCode || null,
-            ticketId: ticketId,
-          }),
-        });
+        const ATOMIC_API_URL = process.env.ATOMIC_API_URL;
 
-        const atomicResult = await atomicResponse.json();
-        
-        if (atomicResponse.ok) {
-          if (atomicResult.alreadyProcessed) {
-            fastify.log.info(`Atomic operations already processed for ticket ${ticketId}`);
+        if (ATOMIC_API_URL) {
+          fastify.log.info("Calling atomic operations API to update event stats");
+
+          const atomicResponse = await fetch(ATOMIC_API_URL, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              ticketId,
+              eventCreatorId: paymentData.eventCreatorId,
+              eventId: paymentData.eventId,
+              discountCode: paymentData.discountCode,
+              ticketPrice: paymentData.ticketPrice,
+            }),
+          });
+
+          if (atomicResponse.ok) {
+            const atomicResult = await atomicResponse.json();
+
+            if (atomicResult.alreadyProcessed) {
+              fastify.log.info(`Atomic operations already processed for ticket ${ticketId}`);
+            } else {
+              fastify.log.info("Atomic operations executed successfully");
+            }
           } else {
-            fastify.log.info("Atomic operations completed successfully");
-            fastify.log.info(`Operations performed:`, atomicResult.operationsPerformed);
+            fastify.log.warn("Failed to execute atomic operations - ticket still created successfully");
           }
         } else {
-          fastify.log.error("Atomic operations failed:", atomicResult);
-          // Don't fail ticket generation, but log the error
+          fastify.log.warn("ATOMIC_API_URL not configured - skipping atomic operations");
         }
       } catch (atomicError) {
-        fastify.log.error("Error calling atomic operations API:", atomicError);
-        // Don't fail ticket generation
+        fastify.log.error("Error calling atomic operations API (non-blocking):", atomicError);
       }
 
-      // Step 8: Handle referral tracking (separate from atomic ops)
+      // Step 8: Update referral code usage if applicable
       if (paymentData.referralCode || paymentData.referralName) {
         try {
           const referralCode = paymentData.referralCode || paymentData.referralName;
@@ -277,31 +277,45 @@ export default async function ticketRoute(fastify, options) {
         }
       }
 
-      // Step 9: Check and save to admin collection using ticketId as document ID
-      const adminTicketRef = adminDb
+      // Step 9: Update daily sales aggregation in admin collection
+      // Format: admin/events/{eventId}/{YYYY-MM-DD}
+      const purchaseDateFormatted = now.toISOString().split('T')[0]; // YYYY-MM-DD format
+      const adminSalesRef = adminDb
         .collection("admin")
         .doc("events")
         .collection(paymentData.eventId)
-        .doc(ticketId);
+        .doc(purchaseDateFormatted);
 
-      const adminTicketDoc = await adminTicketRef.get();
+      try {
+        await adminDb.runTransaction(async (transaction) => {
+          const salesDoc = await transaction.get(adminSalesRef);
 
-      if (!adminTicketDoc.exists) {
-        await adminTicketRef.set({
-          reference,
-          uid: paymentData.userId,
-          ticketPrice: paymentData.ticketPrice,
-          ticketType: paymentData.ticketType,
-          date: now.toISOString(),
-          purchaseDate,
-          purchaseTime,
-          eventName: paymentData.eventName,
-          eventCreatorId: paymentData.eventCreatorId,
+          if (!salesDoc.exists) {
+            // First purchase for this date - create new document
+            transaction.set(adminSalesRef, {
+              eventName: paymentData.eventName,
+              ticketCount: 1,
+              ticketSales: paymentData.ticketPrice,
+              lastPurchaseTime: purchaseTime,
+              createdAt: now.toISOString(),
+              updatedAt: now.toISOString(),
+            });
+            fastify.log.info(`Created new daily sales record for ${purchaseDateFormatted}`);
+          } else {
+            // Update existing document - increment count and add to sales
+            const currentData = salesDoc.data();
+            transaction.update(adminSalesRef, {
+              ticketCount: FieldValue.increment(1),
+              ticketSales: FieldValue.increment(paymentData.ticketPrice),
+              lastPurchaseTime: purchaseTime,
+              updatedAt: now.toISOString(),
+            });
+            fastify.log.info(`Updated daily sales record for ${purchaseDateFormatted}`);
+          }
         });
-
-        fastify.log.info(`Ticket saved to admin collection with ticketId: ${ticketId}`);
-      } else {
-        fastify.log.info(`Ticket already exists in admin collection: ${ticketId}`);
+      } catch (error) {
+        fastify.log.error("Error updating daily sales aggregation:", error);
+        // Non-blocking - ticket was still created successfully
       }
 
       // Step 10: Mark ticket generation as complete in Reference
