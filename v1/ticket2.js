@@ -25,10 +25,10 @@ export default async function freeTicketRoute(fastify, options) {
       }
 
       // Verify reference format for free tickets
-      if (!reference.startsWith("SPTX-FREE-")) {
+      if (!reference.startsWith("SPTX-REF-")) {
         return reply.code(400).send({
           error: "Bad Request",
-          message: "Invalid reference format. Expected format: SPTX-FREE-{timestamp}",
+          message: "Invalid reference format. Expected format: SPTX-REF-{timestamp}",
           developer: "API developed and maintained by Spotix Technologies",
         });
       }
