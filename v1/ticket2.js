@@ -186,8 +186,45 @@ export default async function freeTicketRoute(fastify, options) {
         fastify.log.info(`Free ticket already exists in attendees: ${ticketId}`);
       }
 
-      // SKIP Step 7: atomic operations (not needed for free events)
-      fastify.log.info("Skipping atomic operations for free event");
+// NEW: Step 7 - Call atomic operations for free tickets (with price 0)
+try {
+  const ATOMIC_API_URL = process.env.ATOMIC_API_URL;
+
+  if (ATOMIC_API_URL) {
+    fastify.log.info("Calling atomic operations API for free ticket");
+
+    const atomicResponse = await fetch(ATOMIC_API_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        ticketId,
+        creatorId: paymentData.eventCreatorId,     // matches AtomicOperationsRequest
+        eventId: paymentData.eventId,
+        ticketType: paymentData.ticketType,        // important: pass the actual free ticket type
+        ticketPrice: 0,                            // free ticket → no revenue change
+        discountCode: null,                        // no discount on free tickets
+      }),
+    });
+
+    if (atomicResponse.ok) {
+      const atomicResult = await atomicResponse.json();
+
+      if (atomicResult.alreadyProcessed) {
+        fastify.log.info(`Atomic operations already processed for free ticket ${ticketId}`);
+      } else {
+        fastify.log.info("Atomic operations executed successfully for free ticket");
+      }
+    } else {
+      fastify.log.warn(`Atomic API returned ${atomicResponse.status} for free ticket - still proceeding`);
+    }
+  } else {
+    fastify.log.warn("ATOMIC_API_URL not configured - skipping atomic ops for free ticket");
+  }
+} catch (atomicError) {
+  fastify.log.error("Error calling atomic ops for free ticket (non-blocking):", atomicError);
+}
 
       // Step 8: Handle referral code if present
       if (paymentData.referralCode || paymentData.referralName) {
@@ -255,8 +292,47 @@ export default async function freeTicketRoute(fastify, options) {
 
       fastify.log.info("Reference updated - free ticket generation complete");
 
-      // SKIP Step 11: Analytics (not needed for free events)
-      fastify.log.info("Skipping analytics for free event");
+// ────────────────────────────────────────────────────────────────
+// NEW: Step 7c – Update global platform analytics for free tickets
+// ────────────────────────────────────────────────────────────────
+try {
+  const ANALYTICS_FUNCTION_URL = process.env.ANALYTICS_FUNCTION_URL;
+
+  if (ANALYTICS_FUNCTION_URL) {
+    fastify.log.info("Calling analytics endpoint for free ticket");
+
+    const analyticsResponse = await fetch(ANALYTICS_FUNCTION_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        ticketPrice: 0,                    // ← crucial: no revenue impact
+        ticketId,                          // used for idempotency
+        eventId: paymentData.eventId,
+        timestamp: now.toISOString(),      // helps with correct Nigerian time bucketing
+      }),
+    });
+
+    if (analyticsResponse.ok) {
+      const analyticsResult = await analyticsResponse.json();
+
+      if (analyticsResult.alreadyProcessed) {
+        fastify.log.info(`Analytics already processed for free ticket ${ticketId}`);
+      } else {
+        fastify.log.info("Global analytics updated successfully for free ticket");
+      }
+    } else {
+      const status = analyticsResponse.status;
+      fastify.log.warn(`Analytics API returned ${status} for free ticket – proceeding anyway`);
+      // Optional: could await analyticsResponse.text() to log error message
+    }
+  } else {
+    fastify.log.warn("ANALYTICS_FUNCTION_URL not set → skipping analytics for free ticket");
+  }
+} catch (analyticsError) {
+  fastify.log.error("Failed to update global analytics for free ticket (non-blocking):", analyticsError);
+}
 
       // Step 12: Send confirmation email with Free Ticket details
       try {

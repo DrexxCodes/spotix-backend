@@ -209,43 +209,46 @@ export default async function ticketRoute(fastify, options) {
       }
 
       // Step 7: Call atomic operations API (ALWAYS - it handles idempotency internally)
-      try {
-        const ATOMIC_API_URL = process.env.ATOMIC_API_URL;
+try {
+  const ATOMIC_API_URL = process.env.ATOMIC_API_URL;
 
-        if (ATOMIC_API_URL) {
-          fastify.log.info("Calling atomic operations API to update event stats");
+  if (ATOMIC_API_URL) {
+    fastify.log.info("Calling atomic operations API to update event stats");
 
-          const atomicResponse = await fetch(ATOMIC_API_URL, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              ticketId,
-              eventCreatorId: paymentData.eventCreatorId,
-              eventId: paymentData.eventId,
-              discountCode: paymentData.discountCode,
-              ticketPrice: paymentData.ticketPrice,
-            }),
-          });
+    const atomicResponse = await fetch(ATOMIC_API_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        ticketId,
+        creatorId: paymentData.eventCreatorId,      // ← renamed for clarity (matches atomic API)
+        eventId: paymentData.eventId,
+        ticketType: paymentData.ticketType,         // ← NEW: this was missing
+        ticketPrice: paymentData.ticketPrice,
+        discountCode: paymentData.discountCode || null,
+      }),
+    });
 
-          if (atomicResponse.ok) {
-            const atomicResult = await atomicResponse.json();
+    if (atomicResponse.ok) {
+      const atomicResult = await atomicResponse.json();
 
-            if (atomicResult.alreadyProcessed) {
-              fastify.log.info(`Atomic operations already processed for ticket ${ticketId}`);
-            } else {
-              fastify.log.info("Atomic operations executed successfully");
-            }
-          } else {
-            fastify.log.warn("Failed to execute atomic operations - ticket still created successfully");
-          }
-        } else {
-          fastify.log.warn("ATOMIC_API_URL not configured - skipping atomic operations");
-        }
-      } catch (atomicError) {
-        fastify.log.error("Error calling atomic operations API (non-blocking):", atomicError);
+      if (atomicResult.alreadyProcessed) {
+        fastify.log.info(`Atomic operations already processed for ticket ${ticketId}`);
+      } else {
+        fastify.log.info("Atomic operations executed successfully");
       }
+    } else {
+      fastify.log.warn(`Atomic API returned ${atomicResponse.status} - ticket still created`);
+      // optional: read error body if you want more detail
+    }
+  } else {
+    fastify.log.warn("ATOMIC_API_URL not configured - skipping atomic operations");
+  }
+} catch (atomicError) {
+  fastify.log.error("Error calling atomic operations API (non-blocking):", atomicError);
+}
+
 
       // Step 8: Update referral code usage if applicable
       if (paymentData.referralCode || paymentData.referralName) {
